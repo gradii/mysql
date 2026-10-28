@@ -1,59 +1,70 @@
 package mysql
 
 import (
-	"fmt"
-	"net/url"
+	"sync"
 
-	"github.com/goravel/framework/contracts/config"
-	"github.com/goravel/framework/contracts/database"
-	contractsdriver "github.com/goravel/framework/contracts/database/driver"
-	"github.com/goravel/framework/contracts/log"
-	"github.com/goravel/framework/contracts/process"
-	"github.com/goravel/framework/contracts/testing/docker"
-	"github.com/goravel/framework/errors"
-	"github.com/goravel/framework/support/str"
-	"gorm.io/driver/mysql"
-	"gorm.io/gorm"
-
-	"github.com/goravel/mysql/contracts"
+	"github.com/gradii/framework/contracts/config"
+	"github.com/gradii/framework/contracts/database"
+	contractsdriver "github.com/gradii/framework/contracts/database/driver"
+	"github.com/gradii/framework/contracts/log"
+	"github.com/gradii/framework/contracts/process"
+	"github.com/gradii/framework/contracts/testing/docker"
+	"github.com/gradii/mysql/contracts"
+	mysqlerrors "github.com/gradii/mysql/errors"
 )
 
-var _ contractsdriver.Driver = &Mysql{}
+var _ contractsdriver.Driver = (*Mysql)(nil)
+var _ contractsdriver.DriverWithDialect = (*Mysql)(nil)
+var _ contractsdriver.DriverWithServerVersion = (*Mysql)(nil)
 
 type Mysql struct {
-	config  contracts.ConfigBuilder
-	log     log.Log
-	process process.Process
-	version string
+	config        contracts.ConfigBuilder
+	mu            sync.RWMutex
+	serverVersion func() (string, error)
 }
 
-func NewMysql(config config.Config, log log.Log, process process.Process, connection string) *Mysql {
-	return &Mysql{
-		config:  NewConfig(config, connection),
-		log:     log,
-		process: process,
-	}
+// NewMysql resolves a named connection. The log and process arguments are kept
+// for source compatibility; pool ownership belongs to the framework.
+func NewMysql(config config.Config, _ log.Log, _ process.Process, connection string) *Mysql {
+	return &Mysql{config: NewConfig(config, connection)}
 }
 
+// Docker is the compatibility entry point required by the legacy Driver contract.
 func (r *Mysql) Docker() (docker.DatabaseDriver, error) {
-	if r.process == nil {
-		return nil, fmt.Errorf("process facade not set")
-	}
+	return nil, mysqlerrors.DockerNotSupported
+}
 
-	writers := r.config.Writers()
-	if len(writers) == 0 {
-		return nil, errors.DatabaseConfigNotFound
+func (r *Mysql) Dialect() contractsdriver.Dialect {
+	name := Name
+	if writers := r.config.Writers(); len(writers) > 0 {
+		name = writers[0].Driver
 	}
-
-	return NewDocker(r.config, r.process, writers[0].Database, writers[0].Username, writers[0].Password), nil
+	return NewDialect(name)
 }
 
 func (r *Mysql) Grammar() contractsdriver.Grammar {
-	version, name := r.versionAndName()
-
-	return NewGrammar(r.config.Writers()[0].Database, r.config.Writers()[0].Prefix, version, name)
+	var endpoint contracts.FullConfig
+	if writers := r.config.Writers(); len(writers) > 0 {
+		endpoint = writers[0]
+	}
+	grammar := NewSchemaGrammar(endpoint.Database, endpoint.Prefix, "", dialectName(endpoint.Driver))
+	grammar.SetTableDefaults(endpoint.Charset, r.config.Config().GetString("database.connections."+r.config.Connection()+".collation"))
+	r.mu.RLock()
+	resolver := r.serverVersion
+	r.mu.RUnlock()
+	grammar.SetVersionResolver(resolver)
+	return grammar
 }
 
+// SetServerVersion receives the framework's cached managed-writer resolver.
+func (r *Mysql) SetServerVersion(resolver func() (string, error)) {
+	r.mu.Lock()
+	r.serverVersion = resolver
+	r.mu.Unlock()
+}
+
+// Pool only normalizes configuration. Connector validation is deferred to the
+// error-returning dialect factory when the framework opens each endpoint.
 func (r *Mysql) Pool() database.Pool {
 	return database.Pool{
 		Readers: r.fullConfigsToConfigs(r.config.Readers()),
@@ -61,95 +72,18 @@ func (r *Mysql) Pool() database.Pool {
 	}
 }
 
-func (r *Mysql) Processor() contractsdriver.Processor {
-	return NewProcessor()
-}
+func (r *Mysql) Processor() contractsdriver.Processor { return NewProcessor() }
 
 func (r *Mysql) fullConfigsToConfigs(fullConfigs []contracts.FullConfig) []database.Config {
 	configs := make([]database.Config, len(fullConfigs))
-	for i, fullConfig := range fullConfigs {
+	for i, endpoint := range fullConfigs {
 		configs[i] = database.Config{
-			Connection:   fullConfig.Connection,
-			Dsn:          fullConfig.Dsn,
-			Database:     fullConfig.Database,
-			Dialector:    fullConfigToDialector(fullConfig),
-			Driver:       Name,
-			Host:         fullConfig.Host,
-			NameReplacer: fullConfig.NameReplacer,
-			NoLowerCase:  fullConfig.NoLowerCase,
-			Password:     fullConfig.Password,
-			Port:         fullConfig.Port,
-			Prefix:       fullConfig.Prefix,
-			Singular:     fullConfig.Singular,
-			Username:     fullConfig.Username,
+			Connector: endpoint.Connector, Connection: endpoint.Connection,
+			Dsn: endpoint.Dsn, Database: endpoint.Database, Driver: dialectName(endpoint.Driver),
+			Host: endpoint.Host, Password: endpoint.Password, Port: endpoint.Port,
+			Prefix: endpoint.Prefix, Username: endpoint.Username,
+			Charset: endpoint.Charset, Timezone: endpoint.Loc,
 		}
 	}
-
 	return configs
-}
-
-func (r *Mysql) versionAndName() (string, string) {
-	version := str.Of(r.getVersion())
-	if version.Contains("MariaDB") {
-		return version.Between("5.5.5-", "-MariaDB").String(), "MariaDB"
-	}
-	return version.String(), Name
-}
-
-func (r *Mysql) getVersion() string {
-	if r.version != "" {
-		return r.version
-	}
-
-	writers := r.Pool().Writers
-	if len(writers) == 0 {
-		return ""
-	}
-
-	instance, err := gorm.Open(writers[0].Dialector)
-	if err != nil {
-		return ""
-	}
-	db, err := instance.DB()
-	if err != nil {
-		return ""
-	}
-	defer func() {
-		_ = db.Close()
-	}()
-
-	var version struct {
-		Value string
-	}
-	grammar := NewGrammar(writers[0].Database, writers[0].Prefix, "", "")
-	if err := instance.Raw(grammar.CompileVersion()).Scan(&version).Error; err != nil {
-		r.version = fmt.Sprintf("UNKNOWN: %s", err)
-	} else {
-		r.version = version.Value
-	}
-
-	return r.version
-}
-
-func dsn(fullConfig contracts.FullConfig) string {
-	if fullConfig.Dsn != "" {
-		return fullConfig.Dsn
-	}
-	if fullConfig.Host == "" {
-		return ""
-	}
-
-	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=%s&parseTime=%t&loc=%s&multiStatements=true",
-		fullConfig.Username, fullConfig.Password, fullConfig.Host, fullConfig.Port, fullConfig.Database, fullConfig.Charset, true, url.QueryEscape(fullConfig.Loc))
-}
-
-func fullConfigToDialector(fullConfig contracts.FullConfig) gorm.Dialector {
-	dsn := dsn(fullConfig)
-	if dsn == "" {
-		return nil
-	}
-
-	return mysql.New(mysql.Config{
-		DSN: dsn,
-	})
 }

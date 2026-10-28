@@ -3,13 +3,13 @@ package mysql
 import (
 	"testing"
 
-	contractsdriver "github.com/goravel/framework/contracts/database/driver"
-	databasedb "github.com/goravel/framework/database/db"
-	"github.com/goravel/framework/database/schema"
-	"github.com/goravel/framework/foundation/json"
-	mocksdriver "github.com/goravel/framework/mocks/database/driver"
-	mocksfoundation "github.com/goravel/framework/mocks/foundation"
-	"github.com/goravel/framework/support/convert"
+	contractsdriver "github.com/gradii/framework/contracts/database/driver"
+	databasedb "github.com/gradii/framework/database/db"
+	"github.com/gradii/framework/database/schema"
+	"github.com/gradii/framework/foundation/json"
+	mocksdriver "github.com/gradii/framework/mocks/database/driver"
+	mocksfoundation "github.com/gradii/framework/mocks/foundation"
+	"github.com/gradii/framework/support/convert"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 )
@@ -588,7 +588,7 @@ func (s *GrammarSuite) TestCompileRenameColumn() {
 	})
 
 	s.NoError(err)
-	s.Equal("alter table `goravel_users` change `before` `after` varchar collate utf8mb4_unicode_ci null default 'goravel' comment 'test comment'", sql)
+	s.Equal("alter table `goravel_users` change `before` `after` varchar collate `utf8mb4_unicode_ci` null default 'goravel' comment 'test comment'", sql)
 }
 
 func (s *GrammarSuite) TestGetColumns() {

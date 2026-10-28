@@ -1,81 +1,54 @@
 package mysql
 
 import (
-	"strings"
-
-	"github.com/goravel/framework/contracts/database/driver"
+	"github.com/gradii/framework/contracts/database/driver"
+	contractsquery "github.com/gradii/framework/contracts/database/query"
+	"github.com/spf13/cast"
 )
 
-var _ driver.Processor = &Processor{}
+// Processor adapts the legacy typed metadata contract to the canonical query processor.
+type Processor struct{ query contractsquery.Processor }
 
-type Processor struct {
-}
+var _ driver.Processor = (*Processor)(nil)
 
-func NewProcessor() *Processor {
-	return &Processor{}
-}
-
-func (r Processor) ProcessColumns(dbColumns []driver.DBColumn) []driver.Column {
-	var columns []driver.Column
-	for _, dbColumn := range dbColumns {
-		var nullable bool
-		if dbColumn.Nullable == "YES" {
-			nullable = true
-		}
-		var autoIncrement bool
-		if dbColumn.Extra == "auto_increment" {
-			autoIncrement = true
-		}
-
-		columns = append(columns, driver.Column{
-			Autoincrement: autoIncrement,
-			Collation:     dbColumn.Collation,
-			Comment:       dbColumn.Comment,
-			Default:       dbColumn.Default,
-			Extra:         dbColumn.Extra,
-			Name:          dbColumn.Name,
-			Nullable:      nullable,
-			Type:          dbColumn.Type,
-			TypeName:      dbColumn.TypeName,
-		})
+func NewProcessor() *Processor { return &Processor{query: NewQueryProcessor()} }
+func (r Processor) processor() contractsquery.Processor {
+	if r.query != nil {
+		return r.query
 	}
-
+	return NewQueryProcessor()
+}
+func (r Processor) ProcessColumns(values []driver.DBColumn) []driver.Column {
+	rows := make([]contractsquery.Row, len(values))
+	for i, value := range values {
+		rows[i] = contractsquery.Row{"name": value.Name, "type_name": value.TypeName, "type": value.Type, "collation": value.Collation, "nullable": value.Nullable, "default": value.Default, "comment": value.Comment, "extra": value.Extra}
+	}
+	var columns []driver.Column
+	for i, row := range r.processor().ProcessColumns(rows) {
+		columns = append(columns, driver.Column{Name: cast.ToString(row["name"]), TypeName: cast.ToString(row["type_name"]), Type: cast.ToString(row["type"]), Collation: cast.ToString(row["collation"]), Nullable: cast.ToBool(row["nullable"]), Default: cast.ToString(row["default"]), Comment: cast.ToString(row["comment"]), Autoincrement: cast.ToBool(row["auto_increment"]), Extra: values[i].Extra})
+	}
 	return columns
 }
-
-func (r Processor) ProcessForeignKeys(dbForeignKeys []driver.DBForeignKey) []driver.ForeignKey {
-	var foreignKeys []driver.ForeignKey
-	for _, dbForeignKey := range dbForeignKeys {
-		foreignKeys = append(foreignKeys, driver.ForeignKey{
-			Name:           dbForeignKey.Name,
-			Columns:        strings.Split(dbForeignKey.Columns, ","),
-			ForeignSchema:  dbForeignKey.ForeignSchema,
-			ForeignTable:   dbForeignKey.ForeignTable,
-			ForeignColumns: strings.Split(dbForeignKey.ForeignColumns, ","),
-			OnUpdate:       strings.ToLower(dbForeignKey.OnUpdate),
-			OnDelete:       strings.ToLower(dbForeignKey.OnDelete),
-		})
+func (r Processor) ProcessIndexes(values []driver.DBIndex) []driver.Index {
+	rows := make([]contractsquery.Row, len(values))
+	for i, value := range values {
+		rows[i] = contractsquery.Row{"name": value.Name, "columns": value.Columns, "type": value.Type, "unique": value.Unique}
 	}
-
-	return foreignKeys
-}
-
-func (r Processor) ProcessIndexes(dbIndexes []driver.DBIndex) []driver.Index {
 	var indexes []driver.Index
-	for _, dbIndex := range dbIndexes {
-		name := strings.ToLower(dbIndex.Name)
-		indexes = append(indexes, driver.Index{
-			Columns: strings.Split(dbIndex.Columns, ","),
-			Name:    name,
-			Type:    strings.ToLower(dbIndex.Type),
-			Primary: name == "primary",
-			Unique:  dbIndex.Unique,
-		})
+	for _, row := range r.processor().ProcessIndexes(rows) {
+		indexes = append(indexes, driver.Index{Name: cast.ToString(row["name"]), Columns: cast.ToStringSlice(row["columns"]), Type: cast.ToString(row["type"]), Unique: cast.ToBool(row["unique"]), Primary: cast.ToBool(row["primary"])})
 	}
-
 	return indexes
 }
-
-func (r Processor) ProcessTypes(types []driver.Type) []driver.Type {
-	return types
+func (r Processor) ProcessForeignKeys(values []driver.DBForeignKey) []driver.ForeignKey {
+	rows := make([]contractsquery.Row, len(values))
+	for i, value := range values {
+		rows[i] = contractsquery.Row{"name": value.Name, "columns": value.Columns, "foreign_schema": value.ForeignSchema, "foreign_table": value.ForeignTable, "foreign_columns": value.ForeignColumns, "on_update": value.OnUpdate, "on_delete": value.OnDelete}
+	}
+	var keys []driver.ForeignKey
+	for _, row := range r.processor().ProcessForeignKeys(rows) {
+		keys = append(keys, driver.ForeignKey{Name: cast.ToString(row["name"]), Columns: cast.ToStringSlice(row["columns"]), ForeignSchema: cast.ToString(row["foreign_schema"]), ForeignTable: cast.ToString(row["foreign_table"]), ForeignColumns: cast.ToStringSlice(row["foreign_columns"]), OnUpdate: cast.ToString(row["on_update"]), OnDelete: cast.ToString(row["on_delete"])})
+	}
+	return keys
 }
+func (r Processor) ProcessTypes(values []driver.Type) []driver.Type { return values }

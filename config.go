@@ -1,11 +1,10 @@
 package mysql
 
 import (
-	"fmt"
+	"database/sql/driver"
 
-	"github.com/goravel/framework/contracts/config"
-
-	"github.com/goravel/mysql/contracts"
+	"github.com/gradii/framework/contracts/config"
+	"github.com/gradii/mysql/contracts"
 )
 
 type Config struct {
@@ -14,37 +13,27 @@ type Config struct {
 }
 
 func NewConfig(config config.Config, connection string) *Config {
-	return &Config{
-		config:     config,
-		connection: connection,
-	}
+	return &Config{config: config, connection: connection}
 }
 
-func (r *Config) Config() config.Config {
-	return r.config
-}
+func (r *Config) Config() config.Config { return r.config }
 
-func (r *Config) Connection() string {
-	return r.connection
-}
+func (r *Config) Connection() string { return r.connection }
 
 func (r *Config) Readers() []contracts.FullConfig {
-	configs := r.config.Get(fmt.Sprintf("database.connections.%s.read", r.connection))
-	if readConfigs, ok := configs.([]contracts.Config); ok {
-		return r.fillDefault(readConfigs)
+	configs, ok := r.config.Get("database.connections." + r.connection + ".read").([]contracts.Config)
+	if !ok {
+		return nil
 	}
-
-	return nil
+	return r.fillDefault(configs)
 }
 
 func (r *Config) Writers() []contracts.FullConfig {
-	configs := r.config.Get(fmt.Sprintf("database.connections.%s.write", r.connection))
-	if writeConfigs, ok := configs.([]contracts.Config); ok {
-		return r.fillDefault(writeConfigs)
+	configs, ok := r.config.Get("database.connections." + r.connection + ".write").([]contracts.Config)
+	if !ok {
+		configs = []contracts.Config{{}}
 	}
-
-	// Use default db configuration when write is empty
-	return r.fillDefault([]contracts.Config{{}})
+	return r.fillDefault(configs)
 }
 
 func (r *Config) fillDefault(configs []contracts.Config) []contracts.FullConfig {
@@ -52,53 +41,47 @@ func (r *Config) fillDefault(configs []contracts.Config) []contracts.FullConfig 
 		return nil
 	}
 
-	var fullConfigs []contracts.FullConfig
-	for _, config := range configs {
-		fullConfig := contracts.FullConfig{
-			Config:      config,
-			Connection:  r.connection,
-			Driver:      Name,
-			NoLowerCase: r.config.GetBool(fmt.Sprintf("database.connections.%s.no_lower_case", r.connection)),
-			Prefix:      r.config.GetString(fmt.Sprintf("database.connections.%s.prefix", r.connection)),
-			Singular:    r.config.GetBool(fmt.Sprintf("database.connections.%s.singular", r.connection)),
+	path := "database.connections." + r.connection + "."
+	fullConfigs := make([]contracts.FullConfig, 0, len(configs))
+	for _, endpoint := range configs {
+		if endpoint.Connector == nil {
+			endpoint.Connector, _ = r.config.Get(path + "connector").(driver.Connector)
 		}
-		if nameReplacer := r.config.Get(fmt.Sprintf("database.connections.%s.name_replacer", r.connection)); nameReplacer != nil {
-			if replacer, ok := nameReplacer.(contracts.Replacer); ok {
-				fullConfig.NameReplacer = replacer
+		if endpoint.Dsn == "" {
+			endpoint.Dsn = r.config.GetString(path + "dsn")
+		}
+		if endpoint.Host == "" {
+			endpoint.Host = r.config.GetString(path + "host")
+		}
+		if endpoint.Port == 0 {
+			endpoint.Port = r.config.GetInt(path + "port")
+		}
+		if endpoint.Username == "" {
+			endpoint.Username = r.config.GetString(path + "username")
+		}
+		if endpoint.Password == "" {
+			endpoint.Password = r.config.GetString(path + "password")
+		}
+		if endpoint.Database == "" {
+			endpoint.Database = r.config.GetString(path + "database")
+		}
+		if endpoint.Charset == "" {
+			endpoint.Charset = r.config.GetString(path + "charset")
+		}
+		if endpoint.Loc == "" {
+			endpoint.Loc = r.config.GetString(path + "loc")
+			if endpoint.Loc == "" {
+				endpoint.Loc = r.config.GetString("app.timezone", "UTC")
+			}
+			if endpoint.Loc == "" {
+				endpoint.Loc = "UTC"
 			}
 		}
-
-		// If read or write is empty, use the default config
-		if fullConfig.Dsn == "" {
-			fullConfig.Dsn = r.config.GetString(fmt.Sprintf("database.connections.%s.dsn", r.connection))
-		}
-		if fullConfig.Host == "" {
-			fullConfig.Host = r.config.GetString(fmt.Sprintf("database.connections.%s.host", r.connection))
-		}
-		if fullConfig.Port == 0 {
-			fullConfig.Port = r.config.GetInt(fmt.Sprintf("database.connections.%s.port", r.connection))
-		}
-		if fullConfig.Username == "" {
-			fullConfig.Username = r.config.GetString(fmt.Sprintf("database.connections.%s.username", r.connection))
-		}
-		if fullConfig.Password == "" {
-			fullConfig.Password = r.config.GetString(fmt.Sprintf("database.connections.%s.password", r.connection))
-		}
-		if fullConfig.Database == "" {
-			fullConfig.Database = r.config.GetString(fmt.Sprintf("database.connections.%s.database", r.connection))
-		}
-		if fullConfig.Charset == "" {
-			fullConfig.Charset = r.config.GetString(fmt.Sprintf("database.connections.%s.charset", r.connection))
-		}
-		if fullConfig.Loc == "" {
-			loc := r.config.GetString(fmt.Sprintf("database.connections.%s.loc", r.connection))
-			if loc == "" {
-				loc = r.config.GetString("app.timezone", "UTC")
-			}
-			fullConfig.Loc = loc
-		}
-		fullConfigs = append(fullConfigs, fullConfig)
+		fullConfigs = append(fullConfigs, contracts.FullConfig{
+			Config: endpoint, Connection: r.connection,
+			Driver: dialectName(r.config.GetString(path + "driver")),
+			Prefix: r.config.GetString(path + "prefix"),
+		})
 	}
-
 	return fullConfigs
 }

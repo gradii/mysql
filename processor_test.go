@@ -3,7 +3,7 @@ package mysql
 import (
 	"testing"
 
-	"github.com/goravel/framework/contracts/database/driver"
+	"github.com/gradii/framework/contracts/database/driver"
 	"github.com/stretchr/testify/suite"
 )
 
