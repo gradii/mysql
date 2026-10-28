@@ -3,10 +3,28 @@ package mysql
 import (
 	"github.com/gradii/framework/contracts/database/driver"
 	"github.com/gradii/framework/errors"
+	"github.com/spf13/cast"
 	"strings"
 )
 
 var _ driver.SchemaMetadataGrammar = (*SchemaGrammar)(nil)
+var _ driver.SchemaCurrentSchemas = (*SchemaGrammar)(nil)
+
+// Connection settings can come entirely from a Connector or DSN. The active
+// session, rather than a possibly empty or overridden config field, owns scope.
+func (*SchemaGrammar) ResolveCurrentSchemas(_ driver.SchemaConnectionInfo, catalog driver.SchemaCatalog) ([]string, error) {
+	if catalog == nil {
+		return nil, errors.SchemaCurrentNamespaceUnavailable
+	}
+	rows, err := catalog.Select(driver.SchemaStatement{SQL: "select database() as name"})
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) != 1 || cast.ToString(rows[0]["name"]) == "" {
+		return nil, errors.SchemaCurrentNamespaceUnavailable
+	}
+	return []string{cast.ToString(rows[0]["name"])}, nil
+}
 
 func (r *SchemaGrammar) CurrentSchemas(database string) []string { return []string{database} }
 func (r *SchemaGrammar) CompileSchemaMetadata(query driver.SchemaMetadataQuery) (driver.SchemaStatement, error) {

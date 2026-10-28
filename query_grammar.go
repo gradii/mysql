@@ -1,6 +1,7 @@
 package mysql
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -404,8 +405,16 @@ func (g *QueryGrammar) CompileJsonUpdateColumn(key string, value any) string {
 		}
 	case []any, map[string]any:
 		rendered = g.CompileJsonValueCast("?")
+	case json.Number:
+		// A decoded JSON number is string-backed in Go. Parse it as JSON so neither MySQL nor
+		// MariaDB stores that binding as a JSON string, and retain its original precision.
+		rendered = "json_extract(?, '$')"
 	default:
-		rendered = g.Parameter(value)
+		if core.IsArrayValue(value) {
+			rendered = g.CompileJsonValueCast("?")
+		} else {
+			rendered = g.Parameter(value)
+		}
 	}
 
 	field, path := g.JsonFieldAndPath(key)
