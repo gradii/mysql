@@ -7,7 +7,7 @@ toolchain go1.27.3
 require (
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/Masterminds/squirrel v1.5.4
-	github.com/gradii/framework v1.18.0
+	github.com/gradii/framework v1.20.0-alpha.0
 	github.com/spf13/cast v1.10.0
 	github.com/stretchr/testify v1.12.1
 )
