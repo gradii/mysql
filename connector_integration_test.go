@@ -44,7 +44,7 @@ func TestConnectorIntegrationCharsetAndTimezone(t *testing.T) {
 			defer cancel()
 			connection, err := pool.Conn(ctx)
 			require.NoError(t, err)
-			defer connection.Close()
+			defer func() { require.NoError(t, connection.Close()) }()
 			var charset, version string
 			require.NoError(t, connection.QueryRowContext(ctx, "select @@character_set_connection").Scan(&charset))
 			require.Equal(t, "utf8mb4", charset)

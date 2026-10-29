@@ -9,7 +9,6 @@ import (
 	"github.com/gradii/framework/foundation/json"
 	mocksdriver "github.com/gradii/framework/mocks/database/driver"
 	mocksfoundation "github.com/gradii/framework/mocks/foundation"
-	"github.com/gradii/framework/support/convert"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 )
@@ -513,7 +512,7 @@ func (s *GrammarSuite) TestCompileJsonValues() {
 		},
 		{
 			name:     "pointer values",
-			args:     []any{convert.Pointer(true)},
+			args:     []any{new(true)},
 			expected: []any{"true"},
 		},
 	}
